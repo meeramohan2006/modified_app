@@ -58,7 +58,6 @@ def process_frame(frame, st_frame):
 
     if person_count > limit:
         st_status.error(f"🚨 ALERT: {person_count} People Detected! (Limit: {limit})")
-        # Play alarm sound in the placeholder
         try:
             st_alarm.audio("alarm.mp3", autoplay=True)
         except:
@@ -72,17 +71,12 @@ def process_frame(frame, st_frame):
         conn.commit()
     else:
         st_status.success(f"✅ Status: Normal ({person_count} people)")
-        # Empty the alarm placeholder when status is normal
         st_alarm.empty()
 
     if results and len(results) > 0:
         annotated_frame = results[0].plot()
         if annotated_frame is not None:
-            # Convert BGR to RGB
-            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-            
-            # Use use_column_width=True for compatibility with older Streamlit versions
-            # if use_container_width causes TypeError
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)           
             st_frame.image(
                 annotated_frame,
                 use_column_width=True
