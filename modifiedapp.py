@@ -65,11 +65,12 @@ def process_frame(frame, st_frame):
 
         st.success(f"✅ Status: Normal ({person_count} people)")
 
+    # FIX: Convert BGR to RGB before displaying
     annotated_frame = results[0].plot()
+    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
 
     st_frame.image(
         annotated_frame,
-        channels="BGR",
         use_container_width=True
     )
 
