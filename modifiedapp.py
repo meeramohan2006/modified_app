@@ -7,10 +7,11 @@ import tempfile
 import os
 import time
 
-# Constants for Optimization
-SKIP_FRAMES = 5  # Only run AI on every 5th frame
-ALERT_COOLDOWN = 2  # Seconds between alarm sounds
-PROCESS_SIZE = (640, 480) # Resize internal frames for speed
+# --- CLOUD OPTIMIZATIONS (1GB RAM LIMIT) ---
+SKIP_FRAMES = 3          # Process every 3rd frame (User requested)
+INFERENCE_SIZE = 320     # Lower YOLO inference resolution (User requested)
+DISPLAY_SIZE = (640, 360) # Target display/process resolution (User requested)
+ALERT_COOLDOWN = 2       # Prevent spamming alerts
 
 # Database setup
 conn = sqlite3.connect('crowd_data.db', check_same_thread=False)
@@ -18,7 +19,7 @@ c = conn.cursor()
 c.execute('CREATE TABLE IF NOT EXISTS alerts (timestamp TEXT, count INTEGER, status TEXT)')
 conn.commit()
 
-# Session State for tracking
+# Session State for efficient tracking
 if 'frame_count' not in st.session_state:
     st.session_state.frame_count = 0
 if 'last_alert_time' not in st.session_state:
@@ -49,9 +50,10 @@ st_count = st.sidebar.empty()
 st_status = st.empty()  
 st_alarm = st.empty()   
 
-# Load model
+# Load model ONCE
 @st.cache_resource
 def load_model():
+    # Use the lightweight nano model
     return YOLO("yolov8n.pt")
 
 model = load_model()
@@ -63,46 +65,48 @@ def process_frame(frame, st_frame):
 
     st.session_state.frame_count += 1
     
-    # Only run AI on every Nth frame to save CPU
-    should_run_ai = (st.session_state.frame_count % SKIP_FRAMES == 0)
-    
-    if should_run_ai:
-        # Resize frame for faster processing
-        small_frame = cv2.resize(frame, PROCESS_SIZE)
-        results = model(small_frame, verbose=False)
-
-        person_count = 0
-        if results and len(results) > 0 and results[0].boxes is not None:
-            person_count = int(sum(
-                1 for b in results[0].boxes.cls
-                if model.names[int(b)] == 'person'
-            ))
-
-        st_count.metric("People Detected", person_count)
-
-        if person_count > limit:
-            st_status.error(f"🚨 ALERT: {person_count} People Detected! (Limit: {limit})")
-            play_alarm()
-
-            # State-change Database Logging (Only log once per crowded event)
-            if st.session_state.last_status == "NORMAL":
-                now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                c.execute('INSERT INTO alerts VALUES (?, ?, ?)', (now, person_count, "CROWDED"))
-                conn.commit()
-                st.session_state.last_status = "CROWDED"
-        else:
-            st_status.success(f"✅ Status: Normal ({person_count} people)")
-            st_alarm.empty()
-            st.session_state.last_status = "NORMAL"
-
-        # Render annotated frame
-        annotated_frame = results[0].plot()
-        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        st_frame.image(annotated_frame, use_column_width=True)
-    else:
-        # Just show raw frame BGR->RGB for skipped frames (keeps video fluid)
+    # Skip frames to save CPU/RAM
+    if st.session_state.frame_count % SKIP_FRAMES != 0:
+        # For skipped frames, display raw RGB to keep video feeling smooth
         raw_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        st_frame.image(raw_rgb, use_column_width=True)
+        resized_raw = cv2.resize(raw_rgb, DISPLAY_SIZE)
+        st_frame.image(resized_raw, use_column_width=True)
+        return
+
+    # Resize frame before detection to save memory
+    frame_resized = cv2.resize(frame, DISPLAY_SIZE)
+    
+    # Run AI with low imgsz for efficiency
+    results = model(frame_resized, imgsz=INFERENCE_SIZE, verbose=False)
+
+    person_count = 0
+    if results and len(results) > 0 and results[0].boxes is not None:
+        person_count = int(sum(
+            1 for b in results[0].boxes.cls
+            if model.names[int(b)] == 'person'
+        ))
+
+    st_count.metric("People Detected", person_count)
+
+    if person_count > limit:
+        st_status.error(f"🚨 ALERT: {person_count} People Detected! (Limit: {limit})")
+        play_alarm()
+
+        # Only log once per crowded event to save database resources
+        if st.session_state.last_status == "NORMAL":
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c.execute('INSERT INTO alerts VALUES (?, ?, ?)', (now, person_count, "CROWDED"))
+            conn.commit()
+            st.session_state.last_status = "CROWDED"
+    else:
+        st_status.success(f"✅ Status: Normal ({person_count} people)")
+        st_alarm.empty()
+        st.session_state.last_status = "NORMAL"
+
+    # Convert YOLO output to RGB and display
+    annotated_frame = results[0].plot()
+    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+    st_frame.image(annotated_frame, use_column_width=True)
 
 
 # Webcam mode
@@ -124,6 +128,7 @@ if mode == "Webcam":
 elif mode == "Video File":
     uploaded = st.file_uploader("Upload MP4 Video", type=['mp4'])
     if uploaded:
+        # Manage file in temp storage, then release immediately
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(uploaded.read())
         cap = cv2.VideoCapture(tfile.name)
