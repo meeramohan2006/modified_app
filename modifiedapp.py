@@ -35,15 +35,21 @@ def load_model():
 
 model = load_model()
 
-# Frame processing
 def process_frame(frame, st_frame):
+
+    if frame is None:
+        return
 
     results = model(frame, verbose=False)
 
-    person_count = sum(
-        1 for b in results[0].boxes.cls
-        if model.names[int(b)] == 'person'
-    )
+    person_count = 0
+
+if results and len(results) > 0 and results[0] is not None:
+
+        person_count = sum(
+            1 for b in results[0].boxes.cls
+            if model.names[int(b)] == 'person'
+        )
 
     st_count.metric("People Detected", person_count)
 
@@ -65,14 +71,23 @@ def process_frame(frame, st_frame):
 
         st.success(f"✅ Status: Normal ({person_count} people)")
 
-    # FIX: Convert BGR to RGB before displaying
-    annotated_frame = results[0].plot()
-    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
 
-    st_frame.image(
-        annotated_frame,
-        use_container_width=True
-    )
+    # Safe frame plotting
+    if results and results[0] is not None:
+
+        annotated_frame = results[0].plot()
+
+        if annotated_frame is not None:
+
+            annotated_frame = cv2.cvtColor(
+                annotated_frame,
+                cv2.COLOR_BGR2RGB
+            )
+
+            st_frame.image(
+                annotated_frame,
+                use_container_width=True
+            )
 
 
 # Webcam mode
@@ -113,14 +128,15 @@ elif mode == "Video File":
 
         st_frame = st.empty()
 
-        while cap.isOpened():
+       while cap.isOpened():
 
-            ret, frame = cap.read()
+    ret, frame = cap.read()
 
-            if not ret:
-                break
+    if not ret or frame is None:
+        break
 
-            process_frame(frame, st_frame)
+    process_frame(frame, st_frame)
+
 
         cap.release()
 
